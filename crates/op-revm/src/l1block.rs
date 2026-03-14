@@ -53,6 +53,14 @@ pub struct L1BlockInfo {
     pub empty_ecotone_scalars: bool,
     /// Last calculated l1 fee cost. Uses as a cache between validation and pre execution stages.
     pub tx_l1_cost: Option<U256>,
+    /// Whether Soul Gas Token (SGT) is enabled for gas payment
+    pub sgt_enabled: bool,
+    /// Whether SGT is native-backed (1:1 with native token)
+    pub sgt_is_native_backed: bool,
+    /// Amount of native balance deducted for gas (for refund calculation)
+    pub sgt_native_deducted: U256,
+    /// Amount of SGT balance deducted for gas (for refund calculation)
+    pub sgt_amount_deducted: U256,
 }
 
 impl L1BlockInfo {

@@ -2,6 +2,7 @@
 use crate::{
     api::exec::OpContextTr,
     constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT},
+    sgt::{add_sgt_balance, deduct_sgt_balance, read_sgt_balance},
     transaction::{deposit::DEPOSIT_TRANSACTION_TYPE, OpTransactionError, OpTxTr},
     L1BlockInfo, OpHaltReason, OpSpecId,
 };
@@ -63,6 +64,54 @@ pub trait IsTxError {
 impl<DB, TX> IsTxError for EVMError<DB, TX> {
     fn is_tx_error(&self) -> bool {
         matches!(self, EVMError::Transaction(_))
+    }
+}
+
+// Helper methods for OpHandler
+impl<EVM, ERROR, FRAME> OpHandler<EVM, ERROR, FRAME>
+where
+    EVM: EvmTr<Context: OpContextTr, Frame = FRAME>,
+    ERROR: EvmTrError<EVM> + From<OpTransactionError> + FromStringError + IsTxError,
+    FRAME: FrameTr<FrameResult = FrameResult, FrameInit = FrameInit>,
+{
+    /// SGT-aware gas refund logic
+    /// Refunds gas in reverse priority: native first, then SGT
+    fn reimburse_caller_sgt(
+        &self,
+        evm: &mut EVM,
+        frame_result: &mut <<EVM as EvmTr>::Frame as FrameTr>::FrameResult,
+        additional_refund: U256,
+    ) -> Result<(), ERROR> {
+        let gas = frame_result.gas();
+        let (block, tx, _, journal, chain, _) = evm.ctx().all_mut();
+        let basefee = block.basefee() as u128;
+        let caller = tx.caller();
+        let effective_gas_price = tx.effective_gas_price(basefee);
+
+        // Calculate total refund amount
+        let gas_refund = U256::from(
+            effective_gas_price.saturating_mul((gas.remaining() + gas.refunded() as u64) as u128),
+        ) + additional_refund;
+
+        if gas_refund.is_zero() {
+            return Ok(());
+        }
+
+        // Refund in REVERSE priority: native first (up to what was deducted), then SGT
+        let native_refund = gas_refund.min(chain.sgt_native_deducted);
+        let sgt_refund = gas_refund.saturating_sub(native_refund).min(chain.sgt_amount_deducted);
+
+        // Refund to native balance
+        if !native_refund.is_zero() {
+            journal
+                .load_account_mut(caller)?
+                .incr_balance(native_refund);
+        }
+
+        // Refund to SGT balance
+        add_sgt_balance(journal, caller, sgt_refund)?;
+
+        Ok(())
     }
 }
 
@@ -144,7 +193,15 @@ where
         // L1 block info is stored in the context for later use.
         // and it will be reloaded from the database if it is not for the current block.
         if chain.l2_block != Some(block.number()) {
+            // Preserve SGT configuration from the current chain context
+            let sgt_enabled = chain.sgt_enabled;
+            let sgt_is_native_backed = chain.sgt_is_native_backed;
+
             *chain = L1BlockInfo::try_fetch(journal.db_mut(), block.number(), spec)?;
+
+            // Restore SGT configuration after fetching L1 block info
+            chain.sgt_enabled = sgt_enabled;
+            chain.sgt_is_native_backed = sgt_is_native_backed;
         }
 
         let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
@@ -161,6 +218,82 @@ where
                     "[OPTIMISM] Failed to load enveloped transaction.".into(),
                 ));
             };
+
+            // NEW: SGT-aware gas deduction path (early return to preserve original code below)
+            if chain.sgt_enabled {
+                // Calculate L2 gas cost (gas_limit × gas_price + blob fees)
+                let basefee = block.basefee() as u128;
+                let blob_price = block.blob_gasprice().unwrap_or_default();
+                let effective_balance_spending = tx
+                    .effective_balance_spending(basefee, blob_price)
+                    .expect("effective balance is always smaller than max balance");
+                let l2_gas_cost = effective_balance_spending - tx.value();
+
+                // TOTAL cost = L2 + L1 + operator
+                let total_cost = l2_gas_cost.saturating_add(additional_cost);
+
+                // Read SGT balance (requires dropping caller_account to release journal borrow)
+                drop(caller_account);
+
+                let sgt_balance = read_sgt_balance(journal, tx.caller());
+
+                // Check total balance (native + SGT) >= total_cost
+                let total_balance = balance.saturating_add(sgt_balance);
+                if total_cost > total_balance {
+                    return Err(InvalidTransaction::LackOfFundForMaxFee {
+                        fee: Box::new(total_cost),
+                        balance: Box::new(total_balance),
+                    }
+                    .into());
+                }
+
+                // Deduct from SGT first, then native (op-geth priority)
+                let sgt_to_deduct = sgt_balance.min(total_cost);
+                let native_to_deduct = total_cost.saturating_sub(sgt_to_deduct);
+
+                // Store deduction amounts for refund calculation
+                chain.sgt_amount_deducted = sgt_to_deduct;
+                chain.sgt_native_deducted = native_to_deduct;
+
+                // Deduct native portion
+                let Some(new_balance) = balance.checked_sub(native_to_deduct) else {
+                    return Err(InvalidTransaction::LackOfFundForMaxFee {
+                        fee: Box::new(native_to_deduct),
+                        balance: Box::new(balance),
+                    }
+                    .into());
+                };
+                balance = new_balance;
+
+                // Check value transfer can be covered by remaining native balance
+                if !cfg.is_balance_check_disabled() {
+                    if balance < tx.value() {
+                        return Err(InvalidTransaction::LackOfFundForMaxFee {
+                            fee: Box::new(tx.value()),
+                            balance: Box::new(balance),
+                        }
+                        .into());
+                    }
+                } else {
+                    // Balance check disabled: ensure balance is at least tx.value (matches calculate_caller_fee behavior)
+                    balance = balance.max(tx.value());
+                }
+
+                // Re-load caller account and update balance
+                let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
+                caller_account.set_balance(balance);
+                if tx.kind().is_call() {
+                    caller_account.bump_nonce();
+                }
+                drop(caller_account);
+
+                // Write SGT deduction to storage
+                deduct_sgt_balance(journal, tx.caller(), sgt_to_deduct)?;
+
+                return Ok(());  // Early return - SGT path complete
+            }
+
+            // ORIGINAL: Standard gas deduction path (completely unchanged below)
             let Some(new_balance) = balance.checked_sub(additional_cost) else {
                 return Err(InvalidTransaction::LackOfFundForMaxFee {
                     fee: Box::new(additional_cost),
@@ -262,6 +395,13 @@ where
                 .operator_fee_refund(frame_result.gas(), spec);
         }
 
+        // NEW: SGT-aware refund logic (early return to preserve original code)
+        let sgt_enabled = evm.ctx().chain().sgt_enabled;
+        if sgt_enabled && evm.ctx().tx().tx_type() != DEPOSIT_TRANSACTION_TYPE {
+            return self.reimburse_caller_sgt(evm, frame_result, additional_refund);
+        }
+
+        // ORIGINAL: Standard refund (unchanged)
         reimburse_caller(evm.ctx(), frame_result.gas(), additional_refund).map_err(From::from)
     }
 
