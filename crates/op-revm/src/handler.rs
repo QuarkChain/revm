@@ -193,15 +193,7 @@ where
         // L1 block info is stored in the context for later use.
         // and it will be reloaded from the database if it is not for the current block.
         if chain.l2_block != Some(block.number()) {
-            // Preserve SGT configuration from the current chain context
-            let sgt_enabled = chain.sgt_enabled;
-            let sgt_is_native_backed = chain.sgt_is_native_backed;
-
             *chain = L1BlockInfo::try_fetch(journal.db_mut(), block.number(), spec)?;
-
-            // Restore SGT configuration after fetching L1 block info
-            chain.sgt_enabled = sgt_enabled;
-            chain.sgt_is_native_backed = sgt_is_native_backed;
         }
 
         let mut caller_account = journal.load_account_with_code_mut(tx.caller())?.data;
@@ -220,7 +212,7 @@ where
             };
 
             // NEW: SGT-aware gas deduction path (early return to preserve original code below)
-            if chain.sgt_enabled {
+            if cfg.is_sgt_enabled() {
                 // Calculate L2 gas cost (gas_limit × gas_price + blob fees)
                 let basefee = block.basefee() as u128;
                 let blob_price = block.blob_gasprice().unwrap_or_default();
@@ -396,8 +388,7 @@ where
         }
 
         // NEW: SGT-aware refund logic (early return to preserve original code)
-        let sgt_enabled = evm.ctx().chain().sgt_enabled;
-        if sgt_enabled && evm.ctx().tx().tx_type() != DEPOSIT_TRANSACTION_TYPE {
+        if evm.ctx().cfg().is_sgt_enabled() && evm.ctx().tx().tx_type() != DEPOSIT_TRANSACTION_TYPE {
             return self.reimburse_caller_sgt(evm, frame_result, additional_refund);
         }
 

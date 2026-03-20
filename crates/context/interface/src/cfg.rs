@@ -75,6 +75,18 @@ pub trait Cfg {
 
     /// Returns the gas params for the EVM.
     fn gas_params(&self) -> &GasParams;
+
+    /// Whether Soul Gas Token (SGT) is enabled for gas payment.
+    /// Default: false. Only used by OP Stack chains with SGT.
+    fn is_sgt_enabled(&self) -> bool {
+        false
+    }
+
+    /// Whether SGT is backed 1:1 by native token.
+    /// Default: true.
+    fn is_sgt_native_backed(&self) -> bool {
+        true
+    }
 }
 
 /// What bytecode analysis to perform
