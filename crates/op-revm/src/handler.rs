@@ -227,7 +227,7 @@ where
                 // Read SGT balance (requires dropping caller_account to release journal borrow)
                 drop(caller_account);
 
-                let sgt_balance = read_sgt_balance(journal, tx.caller());
+                let sgt_balance = read_sgt_balance(journal, tx.caller())?;
 
                 // Check total balance (native + SGT) >= total_cost
                 let total_balance = balance.saturating_add(sgt_balance);

@@ -29,28 +29,19 @@ pub fn sgt_balance_slot(account: Address) -> B256 {
 }
 
 /// Read SGT balance from contract storage
-///
-/// Returns U256::ZERO if the contract or storage slot cannot be loaded (e.g., cold loads during gas estimation)
-pub fn read_sgt_balance<JOURNAL>(journal: &mut JOURNAL, account: Address) -> U256
+pub fn read_sgt_balance<JOURNAL>(journal: &mut JOURNAL, account: Address) -> Result<U256, <JOURNAL::Database as Database>::Error>
 where
     JOURNAL: JournalTr,
 {
-    match journal.load_account(SGT_CONTRACT) {
-        Ok(_) => {
-            let sgt_slot = sgt_balance_slot(account);
-            match journal.sload(SGT_CONTRACT, sgt_slot.into()) {
-                Ok(state_load) => state_load.data,
-                Err(_) => U256::ZERO,
-            }
-        },
-        Err(_) => U256::ZERO,
-    }
+    journal.load_account(SGT_CONTRACT)?;
+    let sgt_slot = sgt_balance_slot(account);
+    let state_load = journal.sload(SGT_CONTRACT, sgt_slot.into())?;
+    Ok(state_load.data)
 }
 
 /// Deduct amount from SGT balance in contract storage
 ///
 /// This performs: `balance[account] -= amount` in SGT contract storage.
-/// Ignores errors from cold loads (returns Ok in that case).
 pub fn deduct_sgt_balance<JOURNAL>(journal: &mut JOURNAL, account: Address, amount: U256) -> Result<(), <JOURNAL::Database as Database>::Error>
 where
     JOURNAL: JournalTr,
@@ -59,14 +50,12 @@ where
         return Ok(());
     }
 
-    if let Ok(_) = journal.load_account(SGT_CONTRACT) {
-        let sgt_slot = sgt_balance_slot(account);
-        if let Ok(state_load) = journal.sload(SGT_CONTRACT, sgt_slot.into()) {
-            let sgt_balance = state_load.data;
-            let new_sgt = sgt_balance.saturating_sub(amount);
-            let _ = journal.sstore(SGT_CONTRACT, sgt_slot.into(), new_sgt);
-        }
-    }
+    journal.load_account(SGT_CONTRACT)?;
+    let sgt_slot = sgt_balance_slot(account);
+    let state_load = journal.sload(SGT_CONTRACT, sgt_slot.into())?;
+    let sgt_balance = state_load.data;
+    let new_sgt = sgt_balance.saturating_sub(amount);
+    journal.sstore(SGT_CONTRACT, sgt_slot.into(), new_sgt)?;
 
     Ok(())
 }
@@ -74,7 +63,6 @@ where
 /// Add amount to SGT balance in contract storage
 ///
 /// This performs: `balance[account] += amount` in SGT contract storage.
-/// Ignores errors from cold loads (returns Ok in that case).
 pub fn add_sgt_balance<JOURNAL>(journal: &mut JOURNAL, account: Address, amount: U256) -> Result<(), <JOURNAL::Database as Database>::Error>
 where
     JOURNAL: JournalTr,
@@ -83,14 +71,12 @@ where
         return Ok(());
     }
 
-    if let Ok(_) = journal.load_account(SGT_CONTRACT) {
-        let sgt_slot = sgt_balance_slot(account);
-        if let Ok(state_load) = journal.sload(SGT_CONTRACT, sgt_slot.into()) {
-            let current_sgt = state_load.data;
-            let new_sgt = current_sgt.saturating_add(amount);
-            let _ = journal.sstore(SGT_CONTRACT, sgt_slot.into(), new_sgt);
-        }
-    }
+    journal.load_account(SGT_CONTRACT)?;
+    let sgt_slot = sgt_balance_slot(account);
+    let state_load = journal.sload(SGT_CONTRACT, sgt_slot.into())?;
+    let current_sgt = state_load.data;
+    let new_sgt = current_sgt.saturating_add(amount);
+    journal.sstore(SGT_CONTRACT, sgt_slot.into(), new_sgt)?;
 
     Ok(())
 }
