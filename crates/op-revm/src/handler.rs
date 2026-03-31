@@ -248,14 +248,10 @@ where
                 chain.sgt_native_deducted = native_to_deduct;
 
                 // Deduct native portion
-                let Some(new_balance) = balance.checked_sub(native_to_deduct) else {
-                    return Err(InvalidTransaction::LackOfFundForMaxFee {
-                        fee: Box::new(native_to_deduct),
-                        balance: Box::new(balance),
-                    }
-                    .into());
-                };
-                balance = new_balance;
+                // Safety: total_cost <= total_balance (checked above) and
+                // native_to_deduct = total_cost - sgt_to_deduct where sgt_to_deduct <= sgt_balance,
+                // so native_to_deduct <= balance.
+                balance -= native_to_deduct;
 
                 // Check value transfer can be covered by remaining native balance
                 if !cfg.is_balance_check_disabled() {
