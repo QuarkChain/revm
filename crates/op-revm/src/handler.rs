@@ -83,10 +83,11 @@ where
         additional_refund: U256,
     ) -> Result<(), ERROR> {
         let gas = frame_result.gas();
-        let (block, tx, _, journal, chain, _) = evm.ctx().all_mut();
+        let (block, tx, cfg, journal, chain, _) = evm.ctx().all_mut();
         let basefee = block.basefee() as u128;
         let caller = tx.caller();
         let effective_gas_price = tx.effective_gas_price(basefee);
+        let is_native_backed = cfg.is_sgt_native_backed();
 
         // Calculate total refund amount
         let gas_refund = U256::from(
@@ -109,7 +110,7 @@ where
         }
 
         // Refund to SGT balance
-        add_sgt_balance(journal, caller, sgt_refund)?;
+        add_sgt_balance(journal, caller, sgt_refund, is_native_backed)?;
 
         Ok(())
     }
@@ -276,7 +277,8 @@ where
                 drop(caller_account);
 
                 // Write SGT deduction to storage
-                deduct_sgt_balance(journal, tx.caller(), sgt_to_deduct)?;
+                let is_native_backed = cfg.is_sgt_native_backed();
+                deduct_sgt_balance(journal, tx.caller(), sgt_to_deduct, is_native_backed)?;
 
                 return Ok(());  // Early return - SGT path complete
             }
