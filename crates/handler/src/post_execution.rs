@@ -54,11 +54,13 @@ pub fn reimburse_caller<CTX: ContextTr>(
 }
 
 /// Rewards the beneficiary with transaction fees.
+///
+/// Returns the coinbase fee amount that was credited to the beneficiary.
 #[inline]
 pub fn reward_beneficiary<CTX: ContextTr>(
     context: &mut CTX,
     gas: &Gas,
-) -> Result<(), <CTX::Db as Database>::Error> {
+) -> Result<U256, <CTX::Db as Database>::Error> {
     let (block, tx, cfg, journal, _, _) = context.all_mut();
     let basefee = block.basefee() as u128;
     let effective_gas_price = tx.effective_gas_price(basefee);
@@ -71,12 +73,14 @@ pub fn reward_beneficiary<CTX: ContextTr>(
         effective_gas_price
     };
 
+    let coinbase_fee = U256::from(coinbase_gas_price * gas.used() as u128);
+
     // reward beneficiary
     journal
         .load_account_mut(block.beneficiary())?
-        .incr_balance(U256::from(coinbase_gas_price * gas.used() as u128));
+        .incr_balance(coinbase_fee);
 
-    Ok(())
+    Ok(coinbase_fee)
 }
 
 /// Calculate last gas spent and transform internal reason to external.

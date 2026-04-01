@@ -67,6 +67,37 @@ where
     Ok(())
 }
 
+/// Collect native balance from a fee amount, burning the SGT portion.
+///
+/// When SGT is enabled and not native-backed, fees are split between SGT and native pools.
+/// The SGT portion is burned (not paid to recipient), while the native portion goes to the
+/// recipient. This matches op-geth's `collectNativeBalance`.
+///
+/// Deducts from `sgt_remaining` first (burned), then from `native_remaining` (to recipient).
+/// Both pools are mutated in place. Returns the native amount that should be paid to the recipient.
+///
+/// Returns `amount` unchanged when `sgt_remaining == 0` or `is_native_backed`.
+pub fn collect_native_balance(
+    amount: U256,
+    is_native_backed: bool,
+    sgt_remaining: &mut U256,
+    native_remaining: &mut U256,
+) -> U256 {
+    if is_native_backed || sgt_remaining.is_zero() {
+        return amount;
+    }
+
+    // Burn from SGT pool first
+    let sgt_burn = amount.min(*sgt_remaining);
+    *sgt_remaining = sgt_remaining.saturating_sub(sgt_burn);
+
+    // Remainder comes from native pool
+    let native_part = amount.saturating_sub(sgt_burn).min(*native_remaining);
+    *native_remaining = native_remaining.saturating_sub(native_part);
+
+    native_part
+}
+
 /// Add amount to SGT balance in contract storage.
 ///
 /// This performs: `balance[account] += amount` in SGT contract storage.

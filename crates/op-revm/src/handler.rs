@@ -2,7 +2,7 @@
 use crate::{
     api::exec::OpContextTr,
     constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT},
-    sgt::{add_sgt_balance, deduct_sgt_balance, read_sgt_balance},
+    sgt::{add_sgt_balance, collect_native_balance, deduct_sgt_balance, read_sgt_balance},
     transaction::{deposit::DEPOSIT_TRANSACTION_TYPE, OpTransactionError, OpTxTr},
     L1BlockInfo, OpHaltReason, OpSpecId,
 };
@@ -430,7 +430,32 @@ where
             return Ok(());
         }
 
-        self.mainnet.reward_beneficiary(evm, frame_result)?;
+        // Call post_execution::reward_beneficiary directly to get the coinbase fee amount
+        let coinbase_fee = post_execution::reward_beneficiary(evm.ctx(), frame_result.gas())
+            .map_err(|e| ERROR::from(ContextError::Db(e)))?;
+
+        let is_sgt = evm.ctx().cfg().is_sgt_enabled();
+        let is_native_backed = evm.ctx().cfg().is_sgt_native_backed();
+
+        // SGT: burn the non-native portion of the coinbase fee
+        if is_sgt {
+            let chain = evm.ctx().chain_mut();
+            let actual = collect_native_balance(
+                coinbase_fee,
+                is_native_backed,
+                &mut chain.sgt_amount_deducted,
+                &mut chain.sgt_native_deducted,
+            );
+            let burned = coinbase_fee.saturating_sub(actual);
+            if !burned.is_zero() {
+                let beneficiary = evm.ctx().block().beneficiary();
+                evm.ctx()
+                    .journal_mut()
+                    .load_account_mut(beneficiary)?
+                    .decr_balance(burned);
+            }
+        }
+
         let basefee = evm.ctx().block().basefee() as u128;
 
         // If the transaction is not a deposit transaction, fees are paid out
@@ -458,13 +483,24 @@ where
         };
         let base_fee_amount = U256::from(basefee.saturating_mul(frame_result.gas().used() as u128));
 
-        // Send fees to their respective recipients
+        // Send fees to their respective recipients, applying SGT burning if enabled
         for (recipient, amount) in [
             (L1_FEE_RECIPIENT, l1_cost),
             (BASE_FEE_RECIPIENT, base_fee_amount),
             (OPERATOR_FEE_RECIPIENT, operator_fee_cost),
         ] {
-            ctx.journal_mut().balance_incr(recipient, amount)?;
+            let actual = if is_sgt {
+                let chain = ctx.chain_mut();
+                collect_native_balance(
+                    amount,
+                    is_native_backed,
+                    &mut chain.sgt_amount_deducted,
+                    &mut chain.sgt_native_deducted,
+                )
+            } else {
+                amount
+            };
+            ctx.journal_mut().balance_incr(recipient, actual)?;
         }
 
         Ok(())

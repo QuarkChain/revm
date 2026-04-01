@@ -451,7 +451,8 @@ pub trait Handler {
         evm: &mut Self::Evm,
         exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
     ) -> Result<(), Self::Error> {
-        post_execution::reward_beneficiary(evm.ctx(), exec_result.gas()).map_err(From::from)
+        post_execution::reward_beneficiary(evm.ctx(), exec_result.gas())?;
+        Ok(())
     }
 
     /// Processes the final execution output.
