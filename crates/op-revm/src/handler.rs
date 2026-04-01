@@ -99,8 +99,12 @@ where
         }
 
         // Refund in REVERSE priority: native first (up to what was deducted), then SGT
+        // Update chain tracking in place so reward_beneficiary sees post-refund amounts
+        // (matching op-geth's deductGasFrom which mutates pools in place).
         let native_refund = gas_refund.min(chain.sgt_native_deducted);
         let sgt_refund = gas_refund.saturating_sub(native_refund).min(chain.sgt_amount_deducted);
+        chain.sgt_native_deducted -= native_refund;
+        chain.sgt_amount_deducted -= sgt_refund;
 
         // Refund to native balance
         if !native_refund.is_zero() {
