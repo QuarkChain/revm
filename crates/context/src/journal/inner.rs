@@ -651,7 +651,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     where
         'db: 'a,
     {
-        let mut load = self.load_account_mut_optional(db, address, skip_cold_load)?;
+        let mut load = self.load_account_mut_optional(db, address, skip_cold_load, false)?;
         if load_code {
             load.data.load_code_preserve_error()?;
         }
@@ -668,7 +668,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     where
         'db: 'a,
     {
-        self.load_account_mut_optional(db, address, false)
+        self.load_account_mut_optional(db, address, false, false)
             .map_err(JournalLoadError::unwrap_db_error)
     }
 
@@ -684,7 +684,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
     where
         'db: 'a,
     {
-        let mut load = self.load_account_mut_optional(db, address, skip_cold_load)?;
+        let mut load = self.load_account_mut_optional(db, address, skip_cold_load, false)?;
         if load_code {
             load.data.load_code_preserve_error()?;
         }
@@ -727,6 +727,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         db: &'db mut DB,
         address: Address,
         skip_cold_load: bool,
+        no_warm: bool,
     ) -> Result<StateLoad<JournaledAccount<'a, DB, ENTRY>>, JournalLoadError<DB::Error>>
     where
         'db: 'a,
@@ -743,9 +744,13 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                         .warm_addresses
                         .check_is_cold(&address, skip_cold_load)?;
 
-                    // mark it warm.
-                    account.mark_warm_with_transaction_id(self.transaction_id);
+                    if !no_warm {
+                        // mark it warm.
+                        account.mark_warm_with_transaction_id(self.transaction_id);
+                    }
+                }
 
+                if is_cold {
                     // if it is cold loaded and we have selfdestructed locally it means that
                     // account was selfdestructed in previous transaction and we need to clear its information and storage.
                     if account.is_selfdestructed_locally() {
@@ -758,13 +763,15 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                     // unmark locally created
                     account.unmark_created_locally();
 
-                    // journal loading of cold account.
-                    self.journal.push(ENTRY::account_warmed(address));
+                    if !no_warm {
+                        // journal loading of cold account.
+                        self.journal.push(ENTRY::account_warmed(address));
+                    }
                 }
                 (account, is_cold)
             }
             Entry::Vacant(vac) => {
-                // Precompiles,  among some other account(access list and coinbase included)
+                // Precompiles, among some other accounts (access list and coinbase included)
                 // are warm loaded so we need to take that into account
                 let is_cold = self
                     .warm_addresses
@@ -779,7 +786,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                 };
 
                 // journal loading of cold account.
-                if is_cold {
+                if is_cold && !no_warm {
                     self.journal.push(ENTRY::account_warmed(address));
                 }
 
@@ -810,7 +817,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         skip_cold_load: bool,
     ) -> Result<StateLoad<StorageValue>, JournalLoadError<DB::Error>> {
         self.load_account_mut(db, address)?
-            .sload_concrete_error(key, skip_cold_load)
+            .sload_concrete_error(key, skip_cold_load, false)
             .map(|s| s.map(|s| s.present_value))
     }
 
@@ -830,7 +837,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         };
 
         account
-            .sload_concrete_error(key, skip_cold_load)
+            .sload_concrete_error(key, skip_cold_load, false)
             .map(|s| s.map(|s| s.present_value))
     }
 
@@ -847,7 +854,7 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
         skip_cold_load: bool,
     ) -> Result<StateLoad<SStoreResult>, JournalLoadError<DB::Error>> {
         self.load_account_mut(db, address)?
-            .sstore_concrete_error(key, new, skip_cold_load)
+            .sstore_concrete_error(key, new, skip_cold_load, false)
     }
 
     /// Stores storage slot.
@@ -868,7 +875,69 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
             return Err(JournalLoadError::ColdLoadSkipped);
         };
 
-        account.sstore_concrete_error(key, new, skip_cold_load)
+        account.sstore_concrete_error(key, new, skip_cold_load, false)
+    }
+
+    /// Loads storage slot without affecting warm/cold status.
+    ///
+    /// Used for protocol-level operations (e.g., SGT) that should not influence
+    /// EIP-2929 gas metering during execution.
+    #[inline]
+    pub fn sload_no_warm<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+    ) -> Result<StorageValue, DB::Error> {
+        let Some(mut account) = self.get_account_mut(db, address) else {
+            panic!("sload_no_warm: account {address} not loaded; call load_account_no_warm first");
+        };
+        account
+            .sload_concrete_error(key, false, true)
+            .map_err(JournalLoadError::unwrap_db_error)
+            .map(|s| s.data.present_value)
+    }
+
+    /// Stores storage slot without affecting warm/cold status.
+    ///
+    /// Used for protocol-level operations (e.g., SGT) that should not influence
+    /// EIP-2929 gas metering during execution. Still journals storage changes
+    /// so reverts work correctly.
+    ///
+    /// Account must already be loaded via `load_account_no_warm`.
+    #[inline]
+    pub fn sstore_no_warm<DB: Database>(
+        &mut self,
+        db: &mut DB,
+        address: Address,
+        key: StorageKey,
+        new: StorageValue,
+    ) -> Result<(), DB::Error> {
+        let Some(mut account) = self.get_account_mut(db, address) else {
+            panic!("sstore_no_warm: account {address} not loaded; call load_account_no_warm first");
+        };
+        account
+            .sstore_concrete_error(key, new, false, true)
+            .map_err(JournalLoadError::unwrap_db_error)?;
+        Ok(())
+    }
+
+    /// Loads account mutably without affecting warm/cold status.
+    ///
+    /// Used for protocol-level balance modifications (e.g., SGT) that should not
+    /// influence EIP-2929 gas metering during execution.
+    #[inline]
+    pub fn load_account_mut_no_warm<'a, 'db, DB: Database>(
+        &'a mut self,
+        db: &'db mut DB,
+        address: Address,
+    ) -> Result<JournaledAccount<'a, DB, ENTRY>, DB::Error>
+    where
+        'db: 'a,
+    {
+        self.load_account_mut_optional(db, address, false, true)
+            .map_err(JournalLoadError::unwrap_db_error)
+            .map(|s| s.data)
     }
 
     /// Read transient storage tied to the account.

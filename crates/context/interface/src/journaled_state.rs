@@ -80,6 +80,37 @@ pub trait JournalTr {
         _skip_cold_load: bool,
     ) -> Result<StateLoad<SStoreResult>, JournalLoadError<<Self::Database as Database>::Error>>;
 
+    /// Loads storage value without affecting warm/cold status.
+    ///
+    /// Used for protocol-level operations (e.g., SGT gas payment) that should not
+    /// influence EIP-2929 gas metering during execution.
+    fn sload_no_warm(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+    ) -> Result<StorageValue, <Self::Database as Database>::Error>;
+
+    /// Stores storage value without affecting warm/cold status.
+    ///
+    /// Used for protocol-level operations (e.g., SGT gas payment) that should not
+    /// influence EIP-2929 gas metering during execution. Still journals the storage
+    /// change so reverts work correctly.
+    fn sstore_no_warm(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        value: StorageValue,
+    ) -> Result<(), <Self::Database as Database>::Error>;
+
+    /// Loads account mutably without affecting warm/cold status.
+    ///
+    /// Used for protocol-level balance modifications (e.g., SGT native-backed balance
+    /// sync) that should not influence EIP-2929 gas metering during execution.
+    fn load_account_mut_no_warm(
+        &mut self,
+        address: Address,
+    ) -> Result<Self::JournaledAccount<'_>, <Self::Database as Database>::Error>;
+
     /// Loads transient storage value.
     fn tload(&mut self, address: Address, key: StorageKey) -> StorageValue;
 
@@ -157,6 +188,15 @@ pub trait JournalTr {
 
     /// Loads the account.
     fn load_account(
+        &mut self,
+        address: Address,
+    ) -> Result<StateLoad<&Account>, <Self::Database as Database>::Error>;
+
+    /// Loads the account without affecting warm/cold status.
+    ///
+    /// Used for protocol-level operations (e.g., SGT) that should not influence
+    /// EIP-2929 gas metering during execution.
+    fn load_account_no_warm(
         &mut self,
         address: Address,
     ) -> Result<StateLoad<&Account>, <Self::Database as Database>::Error>;

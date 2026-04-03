@@ -134,6 +134,32 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
             .map_err(JournalLoadError::unwrap_db_error)
     }
 
+    fn sload_no_warm(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+    ) -> Result<StorageValue, <Self::Database as Database>::Error> {
+        self.inner.sload_no_warm(&mut self.database, address, key)
+    }
+
+    fn sstore_no_warm(
+        &mut self,
+        address: Address,
+        key: StorageKey,
+        value: StorageValue,
+    ) -> Result<(), <Self::Database as Database>::Error> {
+        self.inner
+            .sstore_no_warm(&mut self.database, address, key, value)
+    }
+
+    fn load_account_mut_no_warm(
+        &mut self,
+        address: Address,
+    ) -> Result<Self::JournaledAccount<'_>, <Self::Database as Database>::Error> {
+        self.inner
+            .load_account_mut_no_warm(&mut self.database, address)
+    }
+
     fn tload(&mut self, address: Address, key: StorageKey) -> StorageValue {
         self.inner.tload(address, key)
     }
@@ -256,6 +282,13 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         self.inner.load_account(&mut self.database, address)
     }
 
+    fn load_account_no_warm(&mut self, address: Address) -> Result<StateLoad<&Account>, DB::Error> {
+        self.inner
+            .load_account_mut_optional(&mut self.database, address, false, true)
+            .map_err(JournalLoadError::unwrap_db_error)
+            .map(|s| s.map(|j| j.into_account()))
+    }
+
     #[inline]
     fn load_account_mut_skip_cold_load(
         &mut self,
@@ -263,7 +296,7 @@ impl<DB: Database, ENTRY: JournalEntryTr> JournalTr for Journal<DB, ENTRY> {
         skip_cold_load: bool,
     ) -> Result<StateLoad<Self::JournaledAccount<'_>>, DB::Error> {
         self.inner
-            .load_account_mut_optional(&mut self.database, address, skip_cold_load)
+            .load_account_mut_optional(&mut self.database, address, skip_cold_load, false)
             .map_err(JournalLoadError::unwrap_db_error)
     }
 

@@ -29,15 +29,17 @@ pub fn sgt_balance_slot(account: Address) -> B256 {
     keccak256(data)
 }
 
-/// Read SGT balance from contract storage
+/// Read SGT balance from contract storage.
+///
+/// Uses `_no_warm` journal methods to avoid affecting EIP-2929 warm/cold status,
+/// matching op-geth's `GetSoulBalance` which uses `GetState` (no access list warming).
 pub fn read_sgt_balance<JOURNAL>(journal: &mut JOURNAL, account: Address) -> Result<U256, <JOURNAL::Database as Database>::Error>
 where
     JOURNAL: JournalTr,
 {
-    journal.load_account(SGT_CONTRACT)?;
+    journal.load_account_no_warm(SGT_CONTRACT)?;
     let sgt_slot = sgt_balance_slot(account);
-    let state_load = journal.sload(SGT_CONTRACT, sgt_slot.into())?;
-    Ok(state_load.data)
+    journal.sload_no_warm(SGT_CONTRACT, sgt_slot.into())
 }
 
 /// Deduct amount from SGT balance in contract storage.
@@ -45,6 +47,8 @@ where
 /// This performs: `balance[account] -= amount` in SGT contract storage.
 /// When `is_native_backed` is true, also deducts from SGT contract's native balance
 /// (matching op-geth's `subSoulBalance` behavior).
+///
+/// Uses `_no_warm` journal methods to avoid affecting EIP-2929 warm/cold status.
 pub fn deduct_sgt_balance<JOURNAL>(journal: &mut JOURNAL, account: Address, amount: U256, is_native_backed: bool) -> Result<(), <JOURNAL::Database as Database>::Error>
 where
     JOURNAL: JournalTr,
@@ -53,15 +57,14 @@ where
         return Ok(());
     }
 
-    journal.load_account(SGT_CONTRACT)?;
+    journal.load_account_no_warm(SGT_CONTRACT)?;
     let sgt_slot = sgt_balance_slot(account);
-    let state_load = journal.sload(SGT_CONTRACT, sgt_slot.into())?;
-    let sgt_balance = state_load.data;
+    let sgt_balance = journal.sload_no_warm(SGT_CONTRACT, sgt_slot.into())?;
     let new_sgt = sgt_balance.saturating_sub(amount);
-    journal.sstore(SGT_CONTRACT, sgt_slot.into(), new_sgt)?;
+    journal.sstore_no_warm(SGT_CONTRACT, sgt_slot.into(), new_sgt)?;
 
     if is_native_backed {
-        journal.load_account_mut(SGT_CONTRACT)?.decr_balance(amount);
+        journal.load_account_mut_no_warm(SGT_CONTRACT)?.decr_balance(amount);
     }
 
     Ok(())
@@ -103,6 +106,8 @@ pub fn collect_native_balance(
 /// This performs: `balance[account] += amount` in SGT contract storage.
 /// When `is_native_backed` is true, also adds to SGT contract's native balance
 /// (matching op-geth's `addSoulBalance` behavior).
+///
+/// Uses `_no_warm` journal methods to avoid affecting EIP-2929 warm/cold status.
 pub fn add_sgt_balance<JOURNAL>(journal: &mut JOURNAL, account: Address, amount: U256, is_native_backed: bool) -> Result<(), <JOURNAL::Database as Database>::Error>
 where
     JOURNAL: JournalTr,
@@ -111,15 +116,14 @@ where
         return Ok(());
     }
 
-    journal.load_account(SGT_CONTRACT)?;
+    journal.load_account_no_warm(SGT_CONTRACT)?;
     let sgt_slot = sgt_balance_slot(account);
-    let state_load = journal.sload(SGT_CONTRACT, sgt_slot.into())?;
-    let current_sgt = state_load.data;
+    let current_sgt = journal.sload_no_warm(SGT_CONTRACT, sgt_slot.into())?;
     let new_sgt = current_sgt.saturating_add(amount);
-    journal.sstore(SGT_CONTRACT, sgt_slot.into(), new_sgt)?;
+    journal.sstore_no_warm(SGT_CONTRACT, sgt_slot.into(), new_sgt)?;
 
     if is_native_backed {
-        journal.load_account_mut(SGT_CONTRACT)?.incr_balance(amount);
+        journal.load_account_mut_no_warm(SGT_CONTRACT)?.incr_balance(amount);
     }
 
     Ok(())
