@@ -919,7 +919,9 @@ mod tests {
                 operator_fee_scalar: Some(U256::from(OPERATOR_FEE_SCALAR)),
                 operator_fee_constant: Some(U256::from(OPERATOR_FEE_CONST)),
                 tx_l1_cost: Some(U256::ZERO),
-                da_footprint_gas_scalar: None
+                da_footprint_gas_scalar: None,
+                sgt_amount_deducted: U256::ZERO,
+                sgt_native_deducted: U256::ZERO,
             }
         );
     }
@@ -1014,6 +1016,8 @@ mod tests {
                 operator_fee_constant: Some(U256::from(OPERATOR_FEE_CONST)),
                 tx_l1_cost: Some(U256::ZERO),
                 da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR as u16),
+                sgt_amount_deducted: U256::ZERO,
+                sgt_native_deducted: U256::ZERO,
             }
         );
     }
