@@ -89,7 +89,8 @@ pub trait JournalTr {
         address: Address,
         key: StorageKey,
     ) -> Result<StorageValue, <Self::Database as Database>::Error> {
-        self.sload(address, key).map(|s| s.data)
+        let _ = (address, key);
+        unimplemented!("sload_no_warm not implemented — required for SGT support")
     }
 
     /// Stores storage value without affecting warm/cold status.
@@ -103,8 +104,8 @@ pub trait JournalTr {
         key: StorageKey,
         value: StorageValue,
     ) -> Result<(), <Self::Database as Database>::Error> {
-        self.sstore(address, key, value)?;
-        Ok(())
+        let _ = (address, key, value);
+        unimplemented!("sstore_no_warm not implemented — required for SGT support")
     }
 
     /// Loads account mutably without affecting warm/cold status.
@@ -115,7 +116,8 @@ pub trait JournalTr {
         &mut self,
         address: Address,
     ) -> Result<Self::JournaledAccount<'_>, <Self::Database as Database>::Error> {
-        self.load_account_mut(address).map(|s| s.data)
+        let _ = address;
+        unimplemented!("load_account_mut_no_warm not implemented — required for SGT support")
     }
 
     /// Loads transient storage value.
@@ -207,7 +209,8 @@ pub trait JournalTr {
         &mut self,
         address: Address,
     ) -> Result<StateLoad<&Account>, <Self::Database as Database>::Error> {
-        self.load_account(address)
+        let _ = address;
+        unimplemented!("load_account_no_warm not implemented — required for SGT support")
     }
 
     /// Loads the account code, use `load_account_with_code` instead.
