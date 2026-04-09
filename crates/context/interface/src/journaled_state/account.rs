@@ -214,12 +214,15 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
                     self.db.storage(self.address, key)?
                 };
 
-                let slot = vac.insert(EvmStorageSlot::new(value, self.transaction_id));
+                // When no_warm, don't set transaction_id so the slot stays
+                // cold to later normal accesses (is_cold_transaction_id).
+                let tid = if no_warm { 0 } else { self.transaction_id };
+                let slot = vac.insert(EvmStorageSlot::new(value, tid));
                 (slot, is_cold)
             }
         };
 
-        if is_cold {
+        if is_cold && !no_warm {
             // add it to journal as cold loaded.
             self.journal_entries
                 .push(ENTRY::storage_warmed(self.address, key));

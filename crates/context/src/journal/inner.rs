@@ -777,12 +777,15 @@ impl<ENTRY: JournalEntryTr> JournalInner<ENTRY> {
                     .warm_addresses
                     .check_is_cold(&address, skip_cold_load)?;
 
+                // When no_warm, don't set transaction_id so the account stays
+                // cold to later normal accesses (is_cold_transaction_id).
+                let tid = if no_warm { 0 } else { self.transaction_id };
                 let account = if let Some(account) = db.basic(address)? {
                     let mut account: Account = account.into();
-                    account.transaction_id = self.transaction_id;
+                    account.transaction_id = tid;
                     account
                 } else {
-                    Account::new_not_existing(self.transaction_id)
+                    Account::new_not_existing(tid)
                 };
 
                 // journal loading of cold account.

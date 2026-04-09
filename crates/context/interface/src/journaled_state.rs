@@ -88,7 +88,9 @@ pub trait JournalTr {
         &mut self,
         address: Address,
         key: StorageKey,
-    ) -> Result<StorageValue, <Self::Database as Database>::Error>;
+    ) -> Result<StorageValue, <Self::Database as Database>::Error> {
+        self.sload(address, key).map(|s| s.data)
+    }
 
     /// Stores storage value without affecting warm/cold status.
     ///
@@ -100,7 +102,10 @@ pub trait JournalTr {
         address: Address,
         key: StorageKey,
         value: StorageValue,
-    ) -> Result<(), <Self::Database as Database>::Error>;
+    ) -> Result<(), <Self::Database as Database>::Error> {
+        self.sstore(address, key, value)?;
+        Ok(())
+    }
 
     /// Loads account mutably without affecting warm/cold status.
     ///
@@ -109,7 +114,9 @@ pub trait JournalTr {
     fn load_account_mut_no_warm(
         &mut self,
         address: Address,
-    ) -> Result<Self::JournaledAccount<'_>, <Self::Database as Database>::Error>;
+    ) -> Result<Self::JournaledAccount<'_>, <Self::Database as Database>::Error> {
+        self.load_account_mut(address).map(|s| s.data)
+    }
 
     /// Loads transient storage value.
     fn tload(&mut self, address: Address, key: StorageKey) -> StorageValue;
@@ -199,7 +206,9 @@ pub trait JournalTr {
     fn load_account_no_warm(
         &mut self,
         address: Address,
-    ) -> Result<StateLoad<&Account>, <Self::Database as Database>::Error>;
+    ) -> Result<StateLoad<&Account>, <Self::Database as Database>::Error> {
+        self.load_account(address)
+    }
 
     /// Loads the account code, use `load_account_with_code` instead.
     #[inline]
