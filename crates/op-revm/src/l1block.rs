@@ -53,6 +53,10 @@ pub struct L1BlockInfo {
     pub empty_ecotone_scalars: bool,
     /// Last calculated l1 fee cost. Uses as a cache between validation and pre execution stages.
     pub tx_l1_cost: Option<U256>,
+    /// Amount of native balance deducted for SGT gas payment (for refund calculation)
+    pub sgt_native_deducted: U256,
+    /// Amount of SGT balance deducted for gas payment (for refund calculation)
+    pub sgt_amount_deducted: U256,
 }
 
 impl L1BlockInfo {
@@ -251,9 +255,11 @@ impl L1BlockInfo {
         U256::from(estimate_tx_compressed_size(input))
     }
 
-    /// Clears the cached L1 cost of the transaction.
+    /// Clears the cached L1 cost and SGT deduction state of the transaction.
     pub fn clear_tx_l1_cost(&mut self) {
         self.tx_l1_cost = None;
+        self.sgt_native_deducted = U256::ZERO;
+        self.sgt_amount_deducted = U256::ZERO;
     }
 
     /// Calculate additional transaction cost with OpTxTr.

@@ -160,6 +160,9 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
     /// Loads the storage slot.
     ///
     /// If storage is cold and skip_cold_load is true, it will return [`JournalLoadError::ColdLoadSkipped`] error.
+    /// If `no_warm` is true, the slot is loaded without marking it warm or pushing warming
+    /// journal entries (used for protocol-level operations like SGT that should not
+    /// influence EIP-2929 gas metering).
     ///
     /// Does not erase the db error.
     #[inline(never)]
@@ -167,6 +170,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
         &mut self,
         key: StorageKey,
         skip_cold_load: bool,
+        no_warm: bool,
     ) -> Result<StateLoad<&mut EvmStorageSlot>, JournalLoadError<DB::Error>> {
         let is_newly_created = self.account.is_created();
         let (slot, is_cold) = match self.account.storage.entry(key) {
@@ -186,7 +190,9 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
                         return Err(JournalLoadError::ColdLoadSkipped);
                     }
                 }
-                slot.mark_warm_with_transaction_id(self.transaction_id);
+                if !no_warm {
+                    slot.mark_warm_with_transaction_id(self.transaction_id);
+                }
                 (slot, is_cold)
             }
             Entry::Vacant(vac) => {
@@ -200,6 +206,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
                 if is_cold && skip_cold_load {
                     return Err(JournalLoadError::ColdLoadSkipped);
                 }
+
                 // if storage was cleared, we don't need to ping db.
                 let value = if is_newly_created {
                     StorageValue::ZERO
@@ -207,12 +214,15 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
                     self.db.storage(self.address, key)?
                 };
 
-                let slot = vac.insert(EvmStorageSlot::new(value, self.transaction_id));
+                // When no_warm, don't set transaction_id so the slot stays
+                // cold to later normal accesses (is_cold_transaction_id).
+                let tid = if no_warm { 0 } else { self.transaction_id };
+                let slot = vac.insert(EvmStorageSlot::new(value, tid));
                 (slot, is_cold)
             }
         };
 
-        if is_cold {
+        if is_cold && !no_warm {
             // add it to journal as cold loaded.
             self.journal_entries
                 .push(ENTRY::storage_warmed(self.address, key));
@@ -224,6 +234,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
     /// Stores the storage slot.
     ///
     /// If storage is cold and skip_cold_load is true, it will return [`JournalLoadError::ColdLoadSkipped`] error.
+    /// If `no_warm` is true, storage is accessed without affecting warm/cold status.
     ///
     /// Does not erase the db error.
     #[inline]
@@ -232,12 +243,13 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccount<'a, DB, ENTRY> {
         key: StorageKey,
         new: StorageValue,
         skip_cold_load: bool,
+        no_warm: bool,
     ) -> Result<StateLoad<SStoreResult>, JournalLoadError<DB::Error>> {
         // touch the account so changes are tracked.
         self.touch();
 
         // assume that acc exists and load the slot.
-        let slot = self.sload_concrete_error(key, skip_cold_load)?;
+        let slot = self.sload_concrete_error(key, skip_cold_load, no_warm)?;
 
         let ret = Ok(StateLoad::new(
             SStoreResult {
@@ -465,7 +477,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
         key: StorageKey,
         skip_cold_load: bool,
     ) -> Result<StateLoad<&mut EvmStorageSlot>, JournalLoadErasedError> {
-        self.sload_concrete_error(key, skip_cold_load)
+        self.sload_concrete_error(key, skip_cold_load, false)
             .map_err(|i| i.map(ErasedError::new))
     }
 
@@ -477,7 +489,7 @@ impl<'a, DB: Database, ENTRY: JournalEntryTr> JournaledAccountTr
         new: StorageValue,
         skip_cold_load: bool,
     ) -> Result<StateLoad<SStoreResult>, JournalLoadErasedError> {
-        self.sstore_concrete_error(key, new, skip_cold_load)
+        self.sstore_concrete_error(key, new, skip_cold_load, false)
             .map_err(|i| i.map(ErasedError::new))
     }
 

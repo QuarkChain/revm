@@ -48,6 +48,11 @@ pub struct CfgEnv<SPEC = SpecId> {
     pub limit_contract_initcode_size: Option<usize>,
     /// Skips the nonce validation against the account's nonce
     pub disable_nonce_check: bool,
+    /// Whether Soul Gas Token (SGT) is enabled for gas payment.
+    /// Only used by OP Stack chains with SGT deployed. Default: false.
+    pub sgt_enabled: bool,
+    /// Whether SGT is backed 1:1 by native token. Default: true.
+    pub sgt_is_native_backed: bool,
     /// Blob max count. EIP-7840 Add blob schedule to EL config files.
     ///
     /// If this config is not set, the check for max blobs will be skipped.
@@ -149,6 +154,8 @@ impl<SPEC> CfgEnv<SPEC> {
             limit_contract_initcode_size: None,
             spec,
             disable_nonce_check: false,
+            sgt_enabled: false,
+            sgt_is_native_backed: true,
             max_blobs_per_tx: None,
             tx_gas_limit_cap: None,
             blob_base_fee_update_fraction: None,
@@ -251,6 +258,8 @@ impl<SPEC> CfgEnv<SPEC> {
             limit_contract_initcode_size: self.limit_contract_initcode_size,
             spec,
             disable_nonce_check: self.disable_nonce_check,
+            sgt_enabled: self.sgt_enabled,
+            sgt_is_native_backed: self.sgt_is_native_backed,
             tx_gas_limit_cap: self.tx_gas_limit_cap,
             max_blobs_per_tx: self.max_blobs_per_tx,
             blob_base_fee_update_fraction: self.blob_base_fee_update_fraction,
@@ -501,6 +510,14 @@ impl<SPEC: Into<SpecId> + Clone> Cfg for CfgEnv<SPEC> {
     #[inline]
     fn gas_params(&self) -> &GasParams {
         &self.gas_params
+    }
+
+    fn is_sgt_enabled(&self) -> bool {
+        self.sgt_enabled
+    }
+
+    fn is_sgt_native_backed(&self) -> bool {
+        self.sgt_is_native_backed
     }
 }
 
